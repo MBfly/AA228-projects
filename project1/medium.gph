@@ -1,0 +1,12 @@
+color, totalsulfurdioxide
+color, chlorides
+color, fixedacidity
+color, sulphates
+color, pH
+volatileacidity, citricacid
+volatileacidity, color
+chlorides, density
+totalsulfurdioxide, freesulfurdioxide
+density, alcohol
+density, residualsugar
+alcohol, quality

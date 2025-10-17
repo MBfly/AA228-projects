@@ -1,26 +1,31 @@
 import sys
-
 import pandas as pd
 import numpy as np
 import itertools
 import networkx as nx
 import random
+import time
 from math import log
 from functools import lru_cache
 
+
 def write_gph(dag, idx2names, filename):
+    """Write the directed edges of a DAG to a .gph file."""
     with open(filename, 'w') as f:
         for edge in dag.edges():
             f.write("{}, {}\n".format(idx2names[edge[0]], idx2names[edge[1]]))
+    print(f"✅ Bayesian network structure saved to: {filename}")
 
 
 def compute(infile, outfile):
+    start_time = time.time()  # ⏱ start timer
+
     data = pd.read_csv(infile)
     nodes = list(data.columns)
     np.random.seed(0)
     random.seed(0)
-    n = len(nodes)
 
+    # ---------- Mutual Information ----------
     def mutual_information(x, y):
         joint = data.groupby([x, y]).size().div(len(data))
         px = data[x].value_counts(normalize=True)
@@ -30,14 +35,19 @@ def compute(infile, outfile):
             mi += pxy * log((pxy + 1e-9) / ((px[xi] * py[yi]) + 1e-9), 2)
         return mi
 
+    # ---------- Compute pairwise MI ----------
+    t0 = time.time()
     edges = []
     for a, b in itertools.combinations(nodes, 2):
         w = mutual_information(a, b)
         edges.append((a, b, w))
-
     edges.sort(key=lambda x: x[2], reverse=True)
+    print(f"Computed mutual information for {len(edges)} pairs in {time.time() - t0:.2f} s")
+
     top_pairs = [(a, b) for a, b, _ in edges[: max(5, len(edges)//4)]]
 
+    # ---------- Chow–Liu Tree ----------
+    t1 = time.time()
     G = nx.Graph()
     G.add_weighted_edges_from(edges)
     T = nx.maximum_spanning_tree(G, weight="weight")
@@ -47,10 +57,9 @@ def compute(infile, outfile):
     dag.add_nodes_from(nodes)
     for parent, child in nx.bfs_edges(T, source=root):
         dag.add_edge(parent, child)
+    print(f"Chow–Liu tree built with {len(dag.edges())} edges in {time.time() - t1:.2f} s")
 
-    print(f"Chow–Liu tree with {len(dag.edges())} edges (connected).")
-
-
+    # ---------- Local Scoring ----------
     @lru_cache(maxsize=None)
     def local_score(node, parents_tuple):
         parents = list(parents_tuple)
@@ -61,7 +70,7 @@ def compute(infile, outfile):
         parent_counts = data.groupby(parents).size()
         s = 0.0
         for idx, count in joint.items():
-            parent_total = parent_counts[idx[0]] if len(parents)==1 else parent_counts[idx[:-1]]
+            parent_total = parent_counts[idx[0]] if len(parents) == 1 else parent_counts[idx[:-1]]
             p = count / parent_total
             s += np.log(p + 1e-6)
         penalty = 0.05 * len(parents) * np.log(len(data) + len(nodes))
@@ -70,20 +79,21 @@ def compute(infile, outfile):
     def full_score(graph):
         return sum(local_score(node, tuple(graph.predecessors(node))) for node in graph.nodes)
 
+    t2 = time.time()
     best_graph = dag.copy()
     best_score = full_score(best_graph)
-    print(f"Initial score: {best_score:.3f}")
+    print(f"Initial score: {best_score:.3f} (computed in {time.time() - t2:.2f} s)")
 
+    # ---------- Refinement ----------
+    t3 = time.time()
     patience = 4
     patience_counter = 0
     iteration = 0
-    max_moves = 100  
+    max_moves = 100
 
     while patience_counter < patience:
-        improved = False
         best_candidate_graph = None
         best_candidate_score = best_score
-
         move_candidates = random.sample(top_pairs, min(len(top_pairs), max_moves))
 
         for a, b in move_candidates:
@@ -102,7 +112,6 @@ def compute(infile, outfile):
 
                 if not nx.is_directed_acyclic_graph(g):
                     continue
-
                 if not nx.is_weakly_connected(g):
                     continue
 
@@ -126,11 +135,13 @@ def compute(infile, outfile):
             best_score = best_candidate_score
             iteration += 1
             patience_counter = 0
-            improved = True
             print(f"{iteration}: score={best_score:.3f}, edges={len(best_graph.edges())}")
         else:
             patience_counter += 1
 
+    print(f"Refinement phase completed in {time.time() - t3:.2f} s")
+
+    # ---------- Ensure connectivity ----------
     if not nx.is_weakly_connected(best_graph):
         comps = list(nx.weakly_connected_components(best_graph))
         for i in range(len(comps) - 1):
@@ -143,7 +154,15 @@ def compute(infile, outfile):
         print("Reconnected all components.")
 
     print(f"Final edges = {len(best_graph.edges())}, Final score = {best_score:.3f}")
+
+    # ---------- Save to file ----------
+    t4 = time.time()
     write_gph(best_graph, {n: n for n in nodes}, outfile)
+    print(f"File writing time: {time.time() - t4:.2f} s")
+
+    # ---------- Total runtime ----------
+    total_time = time.time() - start_time
+    print(f"⏱ Total runtime: {total_time:.2f} seconds\n")
 
 
 def main():

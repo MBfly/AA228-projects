@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import argparse, csv, os, sys
+import argparse, csv, os, sys, time
 from collections import defaultdict, Counter
 import numpy as np
 
@@ -43,7 +43,7 @@ def parse_problem(csv_path, n_states_override=None, n_actions_override=None, gam
             action_count[a] += 1
 
     if min_state == 1:
-        print("Detected 1-based state indexing → converting to 0-based.", file=sys.stderr)
+        print("converting to 0-based.", file=sys.stderr)
 
         def shift_state_dict(d):
             return {(s - 1, a): v for (s, a), v in d.items()}
@@ -154,7 +154,7 @@ def solve_medium(n_states, n_actions, gamma, samples, avg_reward_by_action):
     return policy
 
 
-#Large
+# Large
 def fitted_q_iteration(n_states, n_actions, gamma, transitions, max_iter=30):
     Q = defaultdict(float)
     for it in range(max_iter):
@@ -179,8 +179,11 @@ def fitted_q_iteration(n_states, n_actions, gamma, transitions, max_iter=30):
         policy[s - 1] = best_a
     return policy
 
-#select solver
+
+# select solver
 def main():
+    start_time = time.time()   # --- START TIMER ---
+
     parser = argparse.ArgumentParser(description="MDP Solver")
     parser.add_argument("csv_path", help="Input CSV file (s,a,r,sp)")
     parser.add_argument("--gamma", type=float, default=None)
@@ -201,7 +204,6 @@ def main():
                               samples, avg_reward_by_action)
     else:
         print("Fitted Q Iteration", file=sys.stderr)
-        # convert back to 1-based for fitted_q_iteration
         transitions_1b = [(s+1, a, r, sp+1) for (s,a,r,sp) in samples]
         policy = fitted_q_iteration(n_states, n_actions, gamma, transitions_1b)
 
@@ -218,6 +220,9 @@ def main():
     with open(out_path, "w") as f:
         for a in policy:
             f.write(f"{int(a)}\n")
+
+    elapsed = time.time() - start_time
+    print(f"\nRuntime: {elapsed:.3f} seconds", file=sys.stderr)   
 
 
 if __name__ == "__main__":
